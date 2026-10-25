@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyBook Demo</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f1f5f9;margin:0;color:#172033}
+header{background:#2448a5;color:#fff;padding:18px 24px;font-size:24px;font-weight:bold}
+main{max-width:850px;margin:25px auto;padding:0 15px}
+h1{margin-bottom:5px}.muted{color:#64748b}
+.box{background:#fff;border-radius:12px;padding:22px;margin-top:18px;box-shadow:0 2px 12px #0000000d}
+label{display:block;font-weight:bold;margin:12px 0 5px}
+input,select,textarea{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:7px;font-size:15px;box-sizing:border-box}
+button{margin-top:16px;background:#2448a5;color:#fff;border:0;padding:12px 18px;border-radius:7px;font-size:16px;cursor:pointer}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.slot{background:#e8f7ed;border:1px solid #a9d9b8;border-radius:7px;padding:10px;text-align:center;cursor:pointer}
+.slot.taken{background:#ffe8e8;border-color:#f2b8b8;color:#9b2222;cursor:not-allowed;text-decoration:line-through}
+#msg{margin-top:12px;font-weight:bold}
+@media(max-width:600px){.slots{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>EasyBook — Appointment Booking</header>
+<main>
+<h1>Book an Appointment</h1>
+<p class="muted">Simple appointment booking demo</p>
+<div class="box">
+<form id="form">
+<label for="name">Full Name</label><input id="name" required placeholder="Enter your name">
+<label for="email">Email</label><input id="email" type="email" required placeholder="Enter your email">
+<label for="phone">Phone Number</label><input id="phone" type="tel" required placeholder="Enter phone number">
+<label for="purpose">Purpose of Appointment</label><textarea id="purpose" required rows="3" placeholder="Reason for appointment"></textarea>
+<label for="date">Appointment Date</label><input id="date" type="date" required>
+<label for="time">Available Time</label><select id="time" required><option value="">Select a time slot below</option></select>
+<div id="slots" class="slots"></div>
+<button type="submit">Book Appointment</button><div id="msg"></div>
+</form>
+</div>
+<div class="box"><h2>Demo Notes</h2><p class="muted">Green = available · Red = booked. This version is for demonstrating the booking flow; bookings are stored in this browser only.</p></div>
+</main>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+const SUPABASE_URL = "https://ldqrosfelaycgzxyztne.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_gcwWEuTLmLRxUircbBcK9g_S1kNX6yh";
+
+const db = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY
+);
+
+const times = [];
+for (let h = 9; h <= 16; h++) {
+  times.push(String(h).padStart(2, "0") + ":00");
+  times.push(String(h).padStart(2, "0") + ":30");
+}
+
+function today() {
+  const d = new Date();
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0");
+}
+
+$("date").min = today();
+$("date").value = today();
+
+async function render() {
+  const date = $("date").value;
+  const msg = $("msg");
+
+  $("slots").innerHTML = "";
+  $("time").innerHTML =
+    '<option value="">Select an available time</option>';
+
+  if (!date) return;
+
+  const { data, error } = await db
+    .from("appointments")
+    .select("appointment_time")
+    .eq("appointment_date", date);
+
+if (error) {
+  console.error("Supabase error:", error);
+  msg.style.color = "#b91c1c";
+  msg.textContent = "Could not load slots: " + error.message;
+  return;
+}
+
+  const booked = data.map(row => row.appointment_time);
+
+  times.forEach(t => {
+    const isBooked = booked.includes(t);
+
+    const option = document.createElement("option");
+    option.value = t;
+    option.textContent = t + (isBooked ? " (Booked)" : "");
+    option.disabled = isBooked;
+    $("time").appendChild(option);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "slot" + (isBooked ? " taken" : "");
+    button.textContent = t + (isBooked ? " — Booked" : " — Available");
+    button.disabled = isBooked;
+
+    button.addEventListener("click", () => {
+      $("time").value = t;
+      document.querySelectorAll(".slot").forEach(
+        x => x.style.outline = ""
+      );
+      button.style.outline = "3px solid #2448a5";
+    });
+
+    $("slots").appendChild(button);
+  });
+}
+
+$("date").addEventListener("change", render);
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+
+  const msg = $("msg");
+  const date = $("date").value;
+  const time = $("time").value;
+
+  if (!time) {
+    msg.style.color = "#b91c1c";
+    msg.textContent = "Please select an available time slot.";
+    return;
+  }
+
+  const submitButton = $("form").querySelector(
+    'button[type="submit"]'
+  );
+  submitButton.disabled = true;
+  msg.style.color = "#334155";
+  msg.textContent = "Saving your appointment...";
+
+  try {
+    const { error } = await db.from("appointments").insert([{
+      name: $("name").value.trim(),
+      email: $("email").value.trim(),
+      phone: $("phone").value.trim(),
+      purpose: $("purpose").value.trim(),
+      appointment_date: date,
+      appointment_time: time
+    }]);
+
+    if (error) {
+      if (error.code === "23505") {
+        msg.textContent = "This slot is already booked. Choose another.";
+      } else {
+        msg.textContent = "Booking failed: " + error.message;
+      }
+      msg.style.color = "#b91c1c";
+      await render();
+      return;
+    }
+
+    msg.style.color = "#15803d";
+    msg.textContent =
+      "Appointment booked successfully! Date: " +
+      date + ", Time: " + time;
+
+    $("form").reset();
+    $("date").min = today();
+    $("date").value = date;
+    await render();
+
+  } catch (err) {
+    msg.style.color = "#b91c1c";
+    msg.textContent = "Connection error. Please try again.";
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+render();
+</script>
+</body>
+</html>
