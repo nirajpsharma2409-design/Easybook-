@@ -141,14 +141,25 @@ $("form").addEventListener("submit", async e => {
   msg.textContent = "Saving your appointment...";
 
   try {
-    const { error } = await db.from("appointments").insert([{
-      name: $("name").value.trim(),
-      email: $("email").value.trim(),
-      phone: $("phone").value.trim(),
-      purpose: $("purpose").value.trim(),
-      appointment_date: date,
-      appointment_time: time
-    }]);
+    
+    const { data: { user }, error: authError } =
+    await db.auth.getUser();
+
+if (authError || !user) {
+    msg.style.color = "#b91c1c";
+    msg.textContent = "Please login before booking.";
+    return;
+}
+
+const { error } = await db.from("appointments").insert([{
+    owner_id: user.id,
+    name: $("name").value.trim(),
+    email: user.email,
+    phone: $("phone").value.trim(),
+    purpose: $("purpose").value.trim(),
+    appointment_date: date,
+    appointment_time: time
+}]);
 
     if (error) {
       if (error.code === "23505") {
@@ -181,5 +192,250 @@ $("form").addEventListener("submit", async e => {
 
 render();
 </script>
+  <!-- LOGIN AND SIGNUP -->
+<section id="authSection" style="padding:20px;">
+    <h2>EasyBook Login / Signup</h2>
+
+    <input id="authEmail" type="email"
+           placeholder="Enter email"
+           style="display:block;margin:10px 0;padding:12px;width:90%;">
+
+    <input id="authPassword" type="password"
+           placeholder="Enter password"
+           style="display:block;margin:10px 0;padding:12px;width:90%;">
+
+    <button onclick="signupUser()">Sign Up</button>
+    <button onclick="loginUser()">Login</button>
+    <button onclick="logoutUser()">Logout</button>
+
+    <p id="authMessage"></p>
+</section>
+  <!-- MY APPOINTMENTS SECTION -->
+  <button onclick="loadMyAppointments()">
+    My Appointments
+  </button>
+<section id="myAppointments" style="display:none; padding:20px;">
+    <h2>My Appointments</h2>
+    <div id="myAppointmentsList">
+        <p>Loading your appointments...</p>
+    </div>
+</section>
+
+<!-- ADMIN DASHBOARD SECTION -->
+  <button onclick="loadAdminAppointments()">
+    Admin Dashboard
+  </button>
+<section id="adminDashboard" style="display:none; padding:20px;">
+    <h2>Admin Dashboard</h2>
+    <div id="adminAppointmentsList">
+        <p>Loading all appointments...</p>
+    </div>
+</section>
+  <script>
+async function loadMyAppointments() {
+    const { data: { user } } = await db.auth.getUser();
+
+    if (!user) {
+        alert("Please login first!");
+        return;
+    }
+
+    document.getElementById("myAppointments").style.display = "block";
+
+    const { data, error } = await db
+        .from("appointments")
+        .select("*")
+        .eq("owner_id", user.id);
+
+    const list = document.getElementById("myAppointmentsList");
+
+    if (error) {
+        list.textContent = "Error loading appointments: " + error.message;
+        return;
+    }
+
+    list.innerHTML = "";
+
+    if (!data || data.length === 0) {
+        list.textContent = "No appointments found.";
+        return;
+    }
+
+    data.forEach(appointment => {
+        const item = document.createElement("div");
+        item.style.cssText = "padding:12px;margin:10px 0;border:1px solid #ccc;border-radius:8px";
+
+        const details = document.createElement("p");
+        details.textContent =
+            appointment.name + " | " +
+            appointment.purpose + " | " +
+            appointment.appointment_date + " | " +
+            appointment.appointment_time;
+
+        const cancel = document.createElement("button");
+        cancel.textContent = "Cancel Appointment";
+        cancel.onclick = () => cancelMyAppointment(appointment.id);
+
+        item.append(details, cancel);
+        list.appendChild(item);
+    });
+}
+
+async function cancelMyAppointment(id) {
+    if (!confirm("Cancel this appointment?")) return;
+
+    const { data: { user } } = await db.auth.getUser();
+    if (!user) return;
+
+    const { error } = await db
+        .from("appointments")
+        .delete()
+        .eq("id", id)
+        .eq("owner_id", user.id);
+
+    if (error) {
+        alert("Cancellation failed: " + error.message);
+        return;
+    }
+
+    alert("Appointment cancelled!");
+    loadMyAppointments();
+}
+  </script>
+  <script>
+async function loadAdminAppointments() {
+    const { data: { user } } = await db.auth.getUser();
+
+    if (!user) {
+        alert("Please login first!");
+        return;
+    }
+
+    const { data: admin, error: adminError } = await db
+        .from("admin_users")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+    if (adminError || !admin) {
+        alert("Access denied! Admin only.");
+        return;
+    }
+
+    document.getElementById("adminDashboard").style.display = "block";
+
+    const { data, error } = await db
+        .from("appointments")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+    const list = document.getElementById("adminAppointmentsList");
+    list.innerHTML = "";
+
+    if (error) {
+        list.textContent = "Error: " + error.message;
+        return;
+    }
+
+    if (!data || data.length === 0) {
+        list.textContent = "No appointments found.";
+        return;
+    }
+
+    data.forEach(appointment => {
+        const item = document.createElement("div");
+        item.style.cssText = "padding:12px;margin:10px 0;border:1px solid #ccc;border-radius:8px";
+
+        const details = document.createElement("p");
+        details.textContent =
+            appointment.name + " | " +
+            appointment.email + " | " +
+            appointment.purpose + " | " +
+            appointment.appointment_date + " | " +
+            appointment.appointment_time;
+
+        const cancel = document.createElement("button");
+        cancel.textContent = "Cancel Appointment";
+        cancel.onclick = async () => {
+            if (!confirm("Cancel this appointment?")) return;
+
+            const { error } = await db
+                .from("appointments")
+                .delete()
+                .eq("id", appointment.id);
+
+            if (error) {
+                alert("Failed: " + error.message);
+                return;
+            }
+
+            alert("Appointment cancelled!");
+            loadAdminAppointments();
+        };
+
+        item.append(details, cancel);
+        list.appendChild(item);
+    });
+}
+  </script>
+  <script>
+async function signupUser() {
+    const email = document.getElementById("authEmail").value.trim();
+    const password = document.getElementById("authPassword").value;
+    const message = document.getElementById("authMessage");
+
+    if (!email || !password) {
+        message.textContent = "Enter email and password.";
+        return;
+    }
+
+    const { data, error } = await db.auth.signUp({
+        email: email,
+        password: password
+    });
+
+    if (error) {
+        message.textContent = error.message;
+        return;
+    }
+
+    message.textContent = data.session
+        ? "Signup successful! You are logged in."
+        : "Signup successful! Check your email to confirm, then log in.";
+}
+
+async function loginUser() {
+    const email = document.getElementById("authEmail").value.trim();
+    const password = document.getElementById("authPassword").value;
+    const message = document.getElementById("authMessage");
+
+    if (!email || !password) {
+        message.textContent = "Enter email and password.";
+        return;
+    }
+
+    const { error } = await db.auth.signInWithPassword({
+        email: email,
+        password: password
+    });
+
+    if (error) {
+        message.textContent = error.message;
+        return;
+    }
+
+    message.textContent = "Login successful!";
+}
+
+async function logoutUser() {
+    const message = document.getElementById("authMessage");
+    const { error } = await db.auth.signOut();
+
+    message.textContent = error
+        ? error.message
+        : "Logged out successfully.";
+}
+  </script>
 </body>
-</html>
+  </html>
+  
